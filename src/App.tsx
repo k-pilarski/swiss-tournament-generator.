@@ -3,6 +3,7 @@ import { TeamRegistration } from './components/TeamRegistration';
 import { ActiveRound } from './components/ActiveRound';
 import { StandingsTable } from './components/StandingsTable';
 import { ControlPanel } from './components/ControlPanel';
+import { BracketTree } from './components/BracketTree';
 import { Trophy, Calendar, Award } from 'lucide-react';
 
 function App() {
@@ -11,6 +12,8 @@ function App() {
   const setTeams = useTournamentStore((state) => state.setTeams);
   const rounds = useTournamentStore((state) => state.rounds);
   const currentRoundNumber = useTournamentStore((state) => state.currentRoundNumber);
+  const bracketGroups = useTournamentStore((state) => state.bracketGroups);
+  const setBracketMatchWinner = useTournamentStore((state) => state.setBracketMatchWinner);
 
   const completedRounds = rounds.filter((r) => r.number < currentRoundNumber);
 
@@ -53,8 +56,23 @@ function App() {
         {currentPhase === 'registration' ? (
           <TeamRegistration setTeams={setTeams} />
         ) : currentPhase === 'brackets' ? (
-          <div className="text-center p-10 text-2xl font-bold text-gray-700 bg-white rounded-2xl border border-gray-100 shadow-md">
-            Tie-breaker Bracket Phase (Coming Soon)
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            {/* Brackets List (7/12 width) */}
+            <div className="lg:col-span-7 space-y-8">
+              {bracketGroups.map((group) => (
+                <BracketTree
+                  key={group.id}
+                  group={group}
+                  teams={teams}
+                  onSetWinner={setBracketMatchWinner}
+                />
+              ))}
+            </div>
+
+            {/* Standings List (5/12 width) */}
+            <div className="lg:col-span-5">
+              <StandingsTable />
+            </div>
           </div>
         ) : (
           <div className="space-y-8">
