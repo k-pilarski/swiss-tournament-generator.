@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { TournamentStore, TournamentStateData, Team, Round } from '../types/tournament';
+import type { TournamentStore, TournamentStateData, Team, Round, BracketMatch } from '../types/tournament';
 import { generateSwissPairings } from '../utils/pairingAlgorithm';
+import { generateBracketsForTiedGroups, propagateByes } from '../utils/bracketGenerator';
 
 const initialStoreState: TournamentStateData = {
   teams: [],
@@ -68,6 +69,26 @@ const recalculateTeamStats = (teams: Team[], rounds: Round[]): Team[] => {
   return Array.from(teamsMap.values());
 };
 
+const clearBracketDescendants = (matchId: string, matches: BracketMatch[]): void => {
+  for (const m of matches) {
+    let changed = false;
+    if (m.sourceMatch1Id === matchId) {
+      m.team1Id = null;
+      changed = true;
+    }
+    if (m.sourceMatch2Id === matchId) {
+      m.team2Id = null;
+      changed = true;
+    }
+
+    if (changed) {
+      m.winnerId = null;
+      m.loserId = null;
+      clearBracketDescendants(m.id, matches);
+    }
+  }
+};
+
 export const useTournamentStore = create<TournamentStore>((set) => ({
   ...initialStoreState,
   history: [],
@@ -119,11 +140,22 @@ export const useTournamentStore = create<TournamentStore>((set) => ({
       const pairings = generateSwissPairings(state.teams, nextRoundNumber);
 
       if (!pairings) {
-        // No valid pairings can be made due to cooldown deadlock: transition to brackets
-        return {
-          currentPhase: 'brackets',
-          history: [...state.history, getStateSnapshot(state)],
-        };
+        // No valid pairings can be made: transition to brackets
+        const generatedBrackets = generateBracketsForTiedGroups(state.teams);
+        
+        if (generatedBrackets.length > 0) {
+          return {
+            currentPhase: 'brackets',
+            bracketGroups: generatedBrackets,
+            history: [...state.history, getStateSnapshot(state)],
+          };
+        } else {
+          // If no ties exist, transition directly to completed
+          return {
+            currentPhase: 'completed',
+            history: [...state.history, getStateSnapshot(state)],
+          };
+        }
       }
 
       const nextRound: Round = {
@@ -184,10 +216,85 @@ export const useTournamentStore = create<TournamentStore>((set) => ({
       };
     }),
 
-  setBracketMatchWinner: (groupId, matchId, winnerId) => {
-    // Placeholder action signature for resolving bracket matches in Phase 07/08
-    console.log('setBracketMatchWinner called', { groupId, matchId, winnerId });
-  },
+  setBracketMatchWinner: (groupId, matchId, winnerId) =>
+    set((state) => {
+      let groupFound = false;
+
+      const updatedBracketGroups = state.bracketGroups.map((group) => {
+        if (group.id !== groupId) {
+          return group;
+        }
+
+        groupFound = true;
+        const matchesCopy = JSON.parse(JSON.stringify(group.matches)) as BracketMatch[];
+        const match = matchesCopy.find((m) => m.id === matchId);
+
+        if (!match) {
+          return group;
+        }
+
+        // Reset winner and clear downstream matches recursively
+        match.winnerId = null;
+        match.loserId = null;
+        clearBracketDescendants(matchId, matchesCopy);
+
+        if (winnerId !== null) {
+          // Set new winner & loser
+          match.winnerId = winnerId;
+          const loserId = winnerId === match.team1Id ? match.team2Id : match.team1Id;
+          match.loserId = loserId;
+
+          // Propagate winner
+          if (match.nextMatchId) {
+            const nextMatch = matchesCopy.find((m) => m.id === match.nextMatchId);
+            if (nextMatch) {
+              if (nextMatch.sourceMatch1Id === matchId) {
+                nextMatch.team1Id = winnerId;
+              } else {
+                nextMatch.team2Id = winnerId;
+              }
+            }
+          }
+
+          // Propagate loser
+          if (match.nextMatchLoserId && loserId !== null) {
+            const loserMatch = matchesCopy.find((m) => m.id === match.nextMatchLoserId);
+            if (loserMatch) {
+              if (loserMatch.sourceMatch1Id === matchId) {
+                loserMatch.team1Id = loserId;
+              } else {
+                loserMatch.team2Id = loserId;
+              }
+            }
+          }
+        }
+
+        // Run bye propagation to handle newly created byes down the tree
+        propagateByes(matchesCopy);
+
+        const isCompleted = matchesCopy.every((m) => m.winnerId !== null);
+
+        return {
+          ...group,
+          matches: matchesCopy,
+          isCompleted,
+        };
+      });
+
+      if (!groupFound) {
+        return {};
+      }
+
+      // Check if all brackets are now completed
+      const allCompleted = updatedBracketGroups.every((g) => g.isCompleted);
+      const nextPhase = allCompleted ? 'completed' : 'brackets';
+
+      return {
+        bracketGroups: updatedBracketGroups,
+        currentPhase: nextPhase,
+        history: [...state.history, getStateSnapshot(state)],
+      };
+    }),
 
   undoLastAction: () =>
     set((state) => {
