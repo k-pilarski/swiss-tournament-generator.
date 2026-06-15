@@ -25,6 +25,9 @@ export const calculateStandings = (teams: Team[]): Team[] => {
 export const canTeamsPlay = (teamA: Team, teamB: Team): boolean => {
   if (teamA.id === teamB.id) return false;
   
+  // Win-difference tolerance: reject if difference is 2 or more
+  if (Math.abs(teamA.wins - teamB.wins) >= 2) return false;
+  
   // Cooldown constraint: check last 3 opponents
   const lastOpponents = teamA.opponentsPlayed.slice(-3);
   return !lastOpponents.includes(teamB.id);
