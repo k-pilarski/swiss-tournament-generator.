@@ -489,3 +489,135 @@ export const generateBracketsForTiedGroups = (teams: Team[]): BracketGroup[] => 
 
   return bracketGroups;
 };
+
+/**
+ * Derives the exact team rankings within a BracketGroup based on match outcomes.
+ * Outputs team IDs in order from 1st to last.
+ */
+export const getBracketGroupRankings = (group: BracketGroup): string[] => {
+  const rankedIds: string[] = [];
+
+  const addId = (id: string | null) => {
+    if (id && !rankedIds.includes(id)) {
+      rankedIds.push(id);
+    }
+  };
+
+  const N = group.teams.length;
+
+  if (N === 2) {
+    const m1 = group.matches.find((m) => m.id === `${group.id}-m1`);
+    if (m1) {
+      addId(m1.winnerId);
+      addId(m1.loserId);
+    }
+  } else if (N === 3) {
+    const m4 = group.matches.find((m) => m.id === `${group.id}-m4`);
+    const m3 = group.matches.find((m) => m.id === `${group.id}-m3`);
+    if (m4) {
+      addId(m4.winnerId);
+      addId(m4.loserId);
+    }
+    if (m3) {
+      addId(m3.loserId);
+    }
+  } else if (N === 4) {
+    const m6 = group.matches.find((m) => m.id === `${group.id}-m6`);
+    const m5 = group.matches.find((m) => m.id === `${group.id}-m5`);
+    const m3 = group.matches.find((m) => m.id === `${group.id}-m3`);
+    if (m6) {
+      addId(m6.winnerId);
+      addId(m6.loserId);
+    }
+    if (m5) {
+      addId(m5.loserId);
+    }
+    if (m3) {
+      addId(m3.loserId);
+    }
+  } else if (N > 4) {
+    const m14 = group.matches.find((m) => m.id === `${group.id}-m14`);
+    const m13 = group.matches.find((m) => m.id === `${group.id}-m13`);
+    const m11 = group.matches.find((m) => m.id === `${group.id}-m11`);
+    const m9 = group.matches.find((m) => m.id === `${group.id}-m9`);
+    const m10 = group.matches.find((m) => m.id === `${group.id}-m10`);
+    const m5 = group.matches.find((m) => m.id === `${group.id}-m5`);
+    const m6 = group.matches.find((m) => m.id === `${group.id}-m6`);
+
+    if (m14) {
+      addId(m14.winnerId);
+      addId(m14.loserId);
+    }
+    if (m13) {
+      addId(m13.loserId);
+    }
+    if (m11) {
+      addId(m11.loserId);
+    }
+    if (m9) {
+      addId(m9.loserId);
+    }
+    if (m10) {
+      addId(m10.loserId);
+    }
+    if (m5) {
+      addId(m5.loserId);
+    }
+    if (m6) {
+      addId(m6.loserId);
+    }
+  }
+
+  // Fallback: append any remaining team IDs in the group that have not been ranked yet
+  const remaining = group.teams.filter((id) => !rankedIds.includes(id));
+  remaining.sort((a, b) => a.localeCompare(b));
+  rankedIds.push(...remaining);
+
+  return rankedIds;
+};
+
+/**
+ * Calculates final rankings for the entire tournament, grouping by Swiss record
+ * and resolving internal rankings using completed bracket results.
+ */
+export const calculateFinalStandings = (
+  teams: Team[],
+  bracketGroups: BracketGroup[]
+): Team[] => {
+  const groupsMap = groupTeamsByRecord(teams);
+  
+  // Sort Swiss score keys: higher wins first, then fewer losses first
+  const sortedScoreKeys = Array.from(groupsMap.keys()).sort((a, b) => {
+    const [winsA, lossesA] = a.split('-').map(Number);
+    const [winsB, lossesB] = b.split('-').map(Number);
+    if (winsA !== winsB) {
+      return winsB - winsA;
+    }
+    return lossesA - lossesB;
+  });
+
+  const finalStandings: Team[] = [];
+
+  for (const scoreKey of sortedScoreKeys) {
+    const tiedTeams = groupsMap.get(scoreKey)!;
+    
+    if (tiedTeams.length < 2) {
+      finalStandings.push(tiedTeams[0]);
+    } else {
+      const bracketGroup = bracketGroups.find((g) => g.scoreKey === scoreKey);
+      if (bracketGroup) {
+        const orderedIds = getBracketGroupRankings(bracketGroup);
+        // Map back to Team objects
+        const orderedTeams = orderedIds.map((id) => tiedTeams.find((t) => t.id === id)!);
+        finalStandings.push(...orderedTeams);
+      } else {
+        // Fallback: sort alphabetically by ID
+        const sortedTied = [...tiedTeams].sort((a, b) => a.id.localeCompare(b.id));
+        finalStandings.push(...sortedTied);
+      }
+    }
+  }
+
+  return finalStandings;
+};
+

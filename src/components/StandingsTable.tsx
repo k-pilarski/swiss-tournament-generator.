@@ -1,12 +1,19 @@
 import React from 'react';
 import { useTournamentStore } from '../store/useTournamentStore';
 import { calculateStandings } from '../utils/pairingAlgorithm';
+import { calculateFinalStandings } from '../utils/bracketGenerator';
 import { Trophy, Shield } from 'lucide-react';
 import type { Team } from '../types/tournament';
 
 export const StandingsTable: React.FC = () => {
   const teams = useTournamentStore((state) => state.teams);
-  const standings = calculateStandings(teams);
+  const bracketGroups = useTournamentStore((state) => state.bracketGroups);
+  const currentPhase = useTournamentStore((state) => state.currentPhase);
+
+  const standings =
+    currentPhase === 'brackets' || currentPhase === 'completed'
+      ? calculateFinalStandings(teams, bracketGroups)
+      : calculateStandings(teams);
 
   const getRankBadge = (rank: number) => {
     switch (rank) {
