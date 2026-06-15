@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { TournamentStore, TournamentStateData, Team } from '../types/tournament';
+import type { TournamentStore, TournamentStateData, Team, Round } from '../types/tournament';
+import { generateSwissPairings } from '../utils/pairingAlgorithm';
 
 const initialStoreState: TournamentStateData = {
   teams: [],
@@ -7,6 +8,64 @@ const initialStoreState: TournamentStateData = {
   currentPhase: 'registration',
   currentRoundNumber: 0,
   bracketGroups: [],
+};
+
+const getStateSnapshot = (state: TournamentStore): TournamentStateData => ({
+  teams: JSON.parse(JSON.stringify(state.teams)),
+  rounds: JSON.parse(JSON.stringify(state.rounds)),
+  currentPhase: state.currentPhase,
+  currentRoundNumber: state.currentRoundNumber,
+  bracketGroups: JSON.parse(JSON.stringify(state.bracketGroups)),
+});
+
+const recalculateTeamStats = (teams: Team[], rounds: Round[]): Team[] => {
+  const teamsMap = new Map<string, Team>(
+    teams.map((t) => [
+      t.id,
+      {
+        ...t,
+        wins: 0,
+        losses: 0,
+        byeCount: 0,
+        opponentsPlayed: [],
+      },
+    ])
+  );
+
+  // Chronologically iterate through rounds and matches
+  for (const round of rounds) {
+    for (const match of round.matches) {
+      if (match.winnerId === null) {
+        continue; // Skip unresolved matches
+      }
+
+      if (match.isBye) {
+        const team = teamsMap.get(match.team1Id);
+        if (team) {
+          team.wins += 1;
+          team.byeCount += 1;
+        }
+      } else if (match.team2Id !== null) {
+        const team1 = teamsMap.get(match.team1Id);
+        const team2 = teamsMap.get(match.team2Id);
+
+        if (team1 && team2) {
+          team1.opponentsPlayed.push(team2.id);
+          team2.opponentsPlayed.push(team1.id);
+
+          if (match.winnerId === team1.id) {
+            team1.wins += 1;
+            team2.losses += 1;
+          } else if (match.winnerId === team2.id) {
+            team2.wins += 1;
+            team1.losses += 1;
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(teamsMap.values());
 };
 
 export const useTournamentStore = create<TournamentStore>((set) => ({
@@ -24,39 +83,110 @@ export const useTournamentStore = create<TournamentStore>((set) => ({
         opponentsPlayed: [],
       }));
 
-      // Deep copy state data to history
-      const nextHistory = [
-        ...state.history,
-        {
-          teams: JSON.parse(JSON.stringify(state.teams)),
-          rounds: JSON.parse(JSON.stringify(state.rounds)),
-          currentPhase: state.currentPhase,
-          currentRoundNumber: state.currentRoundNumber,
-          bracketGroups: JSON.parse(JSON.stringify(state.bracketGroups)),
-        },
-      ];
+      // Generate round 1 pairings immediately
+      const firstRoundPairings = generateSwissPairings(newTeams, 1);
+      if (!firstRoundPairings) {
+        return {};
+      }
+
+      const firstRound: Round = {
+        id: 'round-1',
+        number: 1,
+        matches: firstRoundPairings.matches,
+        isCompleted: firstRoundPairings.matches.every((m) => m.winnerId !== null),
+      };
+
+      const updatedTeams = recalculateTeamStats(newTeams, [firstRound]);
 
       return {
-        teams: newTeams,
+        teams: updatedTeams,
+        rounds: [firstRound],
         currentPhase: 'swiss',
         currentRoundNumber: 1,
-        history: nextHistory,
+        history: [...state.history, getStateSnapshot(state)],
       };
     }),
 
-  generateNextRound: () => {
-    // Placeholder action signature for Swiss pairing math
-    console.log('generateNextRound placeholder called');
-  },
+  generateNextRound: () =>
+    set((state) => {
+      // 1. Make sure current round is complete
+      const currentRound = state.rounds.find((r) => r.number === state.currentRoundNumber);
+      if (!currentRound || !currentRound.isCompleted) {
+        return {};
+      }
 
-  setMatchWinner: (matchId, winnerId) => {
-    // Placeholder action signature for resolving Swiss matches
-    console.log('setMatchWinner placeholder called', { matchId, winnerId });
-  },
+      const nextRoundNumber = state.currentRoundNumber + 1;
+      const pairings = generateSwissPairings(state.teams, nextRoundNumber);
+
+      if (!pairings) {
+        // No valid pairings can be made due to cooldown deadlock: transition to brackets
+        return {
+          currentPhase: 'brackets',
+          history: [...state.history, getStateSnapshot(state)],
+        };
+      }
+
+      const nextRound: Round = {
+        id: `round-${nextRoundNumber}`,
+        number: nextRoundNumber,
+        matches: pairings.matches,
+        isCompleted: pairings.matches.every((m) => m.winnerId !== null),
+      };
+
+      const nextRounds = [...state.rounds, nextRound];
+      const updatedTeams = recalculateTeamStats(state.teams, nextRounds);
+
+      return {
+        teams: updatedTeams,
+        rounds: nextRounds,
+        currentRoundNumber: nextRoundNumber,
+        history: [...state.history, getStateSnapshot(state)],
+      };
+    }),
+
+  setMatchWinner: (matchId, winnerId) =>
+    set((state) => {
+      let matchFound = false;
+      const updatedRounds = state.rounds.map((round) => {
+        // Only allow modifying the current round's matches
+        if (round.number !== state.currentRoundNumber) {
+          return round;
+        }
+
+        const updatedMatches = round.matches.map((match) => {
+          if (match.id === matchId) {
+            matchFound = true;
+            return {
+              ...match,
+              winnerId,
+            };
+          }
+          return match;
+        });
+
+        return {
+          ...round,
+          matches: updatedMatches,
+          isCompleted: updatedMatches.every((m) => m.winnerId !== null),
+        };
+      });
+
+      if (!matchFound) {
+        return {};
+      }
+
+      const updatedTeams = recalculateTeamStats(state.teams, updatedRounds);
+
+      return {
+        rounds: updatedRounds,
+        teams: updatedTeams,
+        history: [...state.history, getStateSnapshot(state)],
+      };
+    }),
 
   setBracketMatchWinner: (groupId, matchId, winnerId) => {
-    // Placeholder action signature for resolving bracket matches
-    console.log('setBracketMatchWinner placeholder called', { groupId, matchId, winnerId });
+    // Placeholder action signature for resolving bracket matches in Phase 07/08
+    console.log('setBracketMatchWinner called', { groupId, matchId, winnerId });
   },
 
   undoLastAction: () =>
