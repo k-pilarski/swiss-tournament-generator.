@@ -2,6 +2,7 @@ import { useTournamentStore } from './store/useTournamentStore';
 import { TeamRegistration } from './components/TeamRegistration';
 import { ActiveRound } from './components/ActiveRound';
 import { StandingsTable } from './components/StandingsTable';
+import { ControlPanel } from './components/ControlPanel';
 import { Trophy, Calendar, Award } from 'lucide-react';
 
 function App() {
@@ -47,7 +48,8 @@ function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="container mx-auto px-4 py-8 max-w-6xl">
+      <main className="container mx-auto px-4 py-8 max-w-6xl space-y-6">
+        <ControlPanel />
         {currentPhase === 'registration' ? (
           <TeamRegistration setTeams={setTeams} />
         ) : currentPhase === 'brackets' ? (
